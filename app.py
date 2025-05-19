@@ -1,0 +1,151 @@
+import streamlit as st
+from sentence_transformers import SentenceTransformer, util
+
+st.set_page_config(page_title="Gen AI Synopsis Scorer", layout="centered")
+st.title("📄 Gen AI Synopsis Scorer (Privacy Aware)")
+
+# Password protection
+password = st.text_input("🔒 Enter access token to continue", type="password")
+if password != "open123":
+    st.warning("Please enter the correct token to use the app.")
+    st.stop()
+
+# Instructions
+st.markdown("Upload your **article (.pdf or .txt)** and **synopsis (.txt)** below.")
+
+# File uploaders
+article_file = st.file_uploader("Upload Article", type=["pdf", "txt"])
+synopsis_file = st.file_uploader("Upload Synopsis", type=["txt"])
+
+if article_file and synopsis_file:
+    st.success("✅ Files uploaded successfully!")
+
+    def extract_text_from_article(file):
+        if file.type == "application/pdf":
+            import fitz  # import here to avoid issues if not installed
+            pdf_doc = fitz.open(stream=file.read(), filetype="pdf")
+            text = ""
+            for page in pdf_doc:
+                text += page.get_text()
+            return text
+        elif file.type == "text/plain":
+            return file.read().decode("utf-8")
+        else:
+            return ""
+
+    def extract_text_from_synopsis(file):
+        return file.read().decode("utf-8")
+
+    # Extract text
+    article_text = extract_text_from_article(article_file)
+    synopsis_text = extract_text_from_synopsis(synopsis_file)
+
+    # Show previews
+    st.subheader("📘 Article Preview")
+    st.text_area("Article Text (first 500 chars)", article_text[:500], height=150)
+
+    st.subheader("📝 Synopsis Preview")
+    st.text_area("Synopsis Text (first 500 chars)", synopsis_text[:500], height=150)
+else:
+    st.info("Please upload both files to proceed.")
+
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+
+# Load model once (put this at the top ideally to avoid reloading each run)
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+@st.cache_resource
+def load_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+model = load_model()
+
+def get_embedding(text):
+    return model.encode([text])
+
+def calculate_similarity(article_text, synopsis_text):
+    emb_article = get_embedding(article_text)
+    emb_synopsis = get_embedding(synopsis_text)
+    similarity = cosine_similarity(emb_article, emb_synopsis)[0][0]
+    return similarity
+
+if article_file and synopsis_file:
+    # ... existing code to extract text and show previews
+
+    similarity_score = calculate_similarity(article_text, synopsis_text)
+    score_out_of_100 = round(similarity_score * 100, 2)
+
+    st.subheader("🧮 Scoring Result")
+    st.write(f"**Similarity Score:** {score_out_of_100} / 100")
+
+    # Simple feedback logic
+    if score_out_of_100 > 80:
+        feedback = "Great synopsis! Very relevant and covers key points."
+    elif score_out_of_100 > 50:
+        feedback = "Good effort, but synopsis can be more comprehensive."
+    else:
+        feedback = "Synopsis needs improvement in capturing the article’s main ideas."
+
+    st.write("**Feedback:**", feedback)
+    article_embedding = model.encode(article_text, convert_to_tensor=True)
+synopsis_embedding = model.encode(synopsis_text, convert_to_tensor=True)
+
+cos_sim = util.pytorch_cos_sim(article_embedding, synopsis_embedding).item()
+score = int(cos_sim * 100)
+
+
+from sentence_transformers import SentenceTransformer, util
+import textstat
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Get embeddings
+article_embedding = model.encode(article_text, convert_to_tensor=True)
+synopsis_embedding = model.encode(synopsis_text, convert_to_tensor=True)
+
+# Content Coverage score (cosine similarity scaled to 50)
+cos_sim = util.pytorch_cos_sim(article_embedding, synopsis_embedding).item()
+coverage = int(cos_sim * 50)
+
+# Clarity score (based on Flesch Reading Ease, scaled to 25)
+reading_ease = textstat.flesch_reading_ease(synopsis_text)
+# Normalize: assume 0-100 scale mapped to 0-25 points
+clarity = min(max(int((reading_ease / 100) * 25), 0), 25)
+
+# Coherence score (dummy example: let's use sentence similarity avg)
+sentences = synopsis_text.split('.')
+if len(sentences) > 1:
+    coherence_scores = []
+    for i in range(len(sentences)-1):
+        emb1 = model.encode(sentences[i], convert_to_tensor=True)
+        emb2 = model.encode(sentences[i+1], convert_to_tensor=True)
+        coherence_scores.append(util.pytorch_cos_sim(emb1, emb2).item())
+    coherence = int((sum(coherence_scores) / len(coherence_scores)) * 25)
+else:
+    coherence = 25  # single sentence, max score
+
+total_score = coverage + clarity + coherence
+st.write(f"📝 NLP Similarity Score: **{score}/100**")
+
+st.subheader("📊 Visual Score Breakdown")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(label="📘 Content Coverage", value=f"{coverage}/50")
+    st.progress(int((coverage / 50) * 100))
+
+with col2:
+    st.metric(label="🪄 Clarity", value=f"{clarity}/25")
+    st.progress(int((clarity / 25) * 100))
+
+with col3:
+    st.metric(label="🔗 Coherence", value=f"{coherence}/25")
+    st.progress(int((coherence / 25) * 100))
+
+st.markdown("---")
+st.success(f"✅ Final Score: **{total_score}/100**")
+
+
